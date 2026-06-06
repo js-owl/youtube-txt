@@ -1,6 +1,6 @@
 // POST /api/summarize
 // Полный цикл: валидация URL → YouTube oEmbed (title/channel) → Supadata (транскрипт) →
-// Gemini 3 Flash (саммари) → маппинг в Summary.
+// Gemini 2.5 Flash (саммари) → маппинг в Summary.
 
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
@@ -13,19 +13,10 @@ import {
   extractTranscriptText,
 } from "@/lib/summary";
 
-// Среда Node.js (по умолчанию в App Router), разрешаем долгие ответы.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// На бесплатном Vercel Hobby лимит 10 сек. Если видео длинное и не влезает,
-// нужно выставить больше (на платных планах — до 60/300/800 сек).
-// Оставим дефолт; увеличим при первой жалобе на таймауты.
-
-// =================================================================
-// Конфиг моделей и endpoint'ов
-// =================================================================
-
-const GEMINI_MODEL = "gemini-2.5-flash"; // безопасный дефолт; "gemini-3-flash" официально ещё не анонсирован в SDK
+const GEMINI_MODEL = "gemini-2.5-flash";
 const SUPADATA_URL = "https://api.supadata.ai/v1/youtube/transcript";
 const OEMBED_URL = "https://www.youtube.com/oembed";
 const MIN_TRANSCRIPT_LENGTH = 50;
@@ -39,12 +30,6 @@ const SYSTEM_PROMPT = `Ты — профессиональный редакто�
 - Верни ответ СТРОГО в формате JSON (без Markdown, без пояснений вокруг), со следующей структурой:
 {"mainThought": "...", "keyPoints": ["...", "...", "..."]}`;
 
-// =================================================================
-// SDK
-// =================================================================
-
-// Не инициализируем на модульном уровне, чтобы не падать в сборке при
-// отсутствии ключа в дев-окружении без ключей — проверим ниже.
 function getGemini(): GoogleGenAI {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
@@ -52,10 +37,6 @@ function getGemini(): GoogleGenAI {
   }
   return new GoogleGenAI({ apiKey });
 }
-
-// =================================================================
-// Внешние запросы
-// =================================================================
 
 type OEmbedInfo = { title: string; channel: string };
 
@@ -73,7 +54,6 @@ async function fetchOEmbed(videoId: string): Promise<OEmbedInfo> {
     if (!isOEmbedResponse(data)) throw new Error("oEmbed: неожиданный формат");
     return { title: data.title, channel: data.author_name };
   } catch {
-    // oEmbed — необязательный шаг. Не валим запрос.
     return { title: "YouTube-видео", channel: "" };
   }
 }
@@ -89,6 +69,10 @@ async function fetchTranscript(videoId: string): Promise<string> {
     headers: { "x-api-key": apiKey },
   });
 
+  // Supadata отдаёт 206 Partial Content с телом-ошибкой, если транскрипта нет.
+  if (res.status === 206) {
+    throw new Error("Для этого видео недоступны текстовые субтитры");
+  }
   if (res.status === 404 || res.status === 403) {
     throw new Error("Для этого видео недоступны текстовые субтитры");
   }
@@ -96,7 +80,6 @@ async function fetchTranscript(videoId: string): Promise<string> {
     throw new Error("Сервис временно перегружен. Попробуйте позже.");
   }
   if (!res.ok) {
-    // Пробуем достать текст ошибки Supadata, иначе — generic.
     let detail = "";
     try {
       const errBody = (await res.json()) as {
@@ -113,6 +96,24 @@ async function fetchTranscript(videoId: string): Promise<string> {
   }
 
   const data: unknown = await res.json();
+
+  // Supadata при ошибке возвращает { error, message, details } — отлавливаем явно,
+  // чтобы не валиться на type-guard с непонятным сообщением.
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof (data as { error: unknown }).error === "string"
+  ) {
+    const errCode = (data as { error: string }).error;
+    if (errCode === "transcript-unavailable" || errCode === "no-transcript") {
+      throw new Error("Для этого видео недоступны текстовые субтитры");
+    }
+    throw new Error(
+      (data as { message?: string }).message || "Supadata: ошибка",
+    );
+  }
+
   if (!isSupadataTranscript(data)) {
     throw new Error("Supadata вернула неожиданный формат ответа.");
   }
@@ -144,7 +145,6 @@ async function generateSummary(transcript: string): Promise<{
     throw new Error("Модель вернула пустой ответ.");
   }
 
-  // На случай, если модель всё же обернёт JSON в ```...``` — почистим.
   const cleaned = raw
     .trim()
     .replace(/^```(?:json)?/i, "")
@@ -164,10 +164,6 @@ async function generateSummary(transcript: string): Promise<{
   return parsed;
 }
 
-// =================================================================
-// HTTP handler
-// =================================================================
-
 type ErrorBody = { success: false; error: string };
 
 function errorResponse(message: string, status: number) {
@@ -177,7 +173,6 @@ function errorResponse(message: string, status: number) {
 
 export async function POST(req: Request): Promise<NextResponse> {
   try {
-    // 1. Парсим тело.
     let body: unknown;
     try {
       body = await req.json();
@@ -194,29 +189,25 @@ export async function POST(req: Request): Promise<NextResponse> {
       return errorResponse("URL не предоставлен", 400);
     }
 
-    // 2. Извлекаем videoId.
     const videoId = extractVideoId(url);
     if (!videoId) {
       return errorResponse("Неверный формат ссылки YouTube", 400);
     }
 
-    // 3. Параллельно: oEmbed + Supadata.
     const [oembed, transcript] = await Promise.all([
       fetchOEmbed(videoId),
       fetchTranscript(videoId),
     ]);
 
-    // 4. Gemini.
     const summary = await generateSummary(transcript);
 
-    // 5. Ответ.
     return NextResponse.json(
       {
         success: true,
         data: {
           title: oembed.title,
           channel: oembed.channel,
-          duration: "", // oEmbed не отдаёт длительность
+          duration: "",
           mainThought: summary.mainThought,
           keyPoints: summary.keyPoints,
         },
@@ -226,10 +217,8 @@ export async function POST(req: Request): Promise<NextResponse> {
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Внутренняя ошибка сервера";
-    // Логируем в консоль Vercel для отладки.
     console.error("[/api/summarize] error:", err);
 
-    // Маппинг текста ошибки → статус. Всё, что не распознали — 500.
     const lower = message.toLowerCase();
     let status = 500;
     if (
