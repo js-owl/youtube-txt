@@ -1,59 +1,97 @@
-'use client'
+"use client";
 
-import { ArrowRight } from 'lucide-react'
-import { useState } from 'react'
-import { LoadingState } from '@/components/loading-state'
-import { ResultCard } from '@/components/result-card'
-import { getMockSummary, type Summary } from '@/lib/mock-summary'
-import { extractVideoId, getThumbnailUrl, isValidYouTubeUrl } from '@/lib/youtube'
+import { ArrowRight } from "lucide-react";
+import { useState } from "react";
+import { LoadingState } from "@/components/loading-state";
+import { ResultCard } from "@/components/result-card";
+import { getMockSummary } from "@/lib/mock-summary";
+import { summarizeUrl, SummarizeError } from "@/lib/summarize-client";
+import {
+  extractVideoId,
+  getThumbnailUrl,
+  isValidYouTubeUrl,
+} from "@/lib/youtube";
 
-type Status = 'idle' | 'loading' | 'result'
+type Status = "idle" | "loading" | "result";
 
 export function Summarizer() {
-  const [url, setUrl] = useState('')
-  const [touched, setTouched] = useState(false)
-  const [status, setStatus] = useState<Status>('idle')
-  const [summary, setSummary] = useState<Summary | null>(null)
-  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null)
+  const [url, setUrl] = useState("");
+  const [touched, setTouched] = useState(false);
+  const [status, setStatus] = useState<Status>("idle");
+  const [summary, setSummary] = useState<ReturnType<
+    typeof getMockSummary
+  > | null>(null);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const isValid = isValidYouTubeUrl(url)
-  const showError = touched && url.length > 0 && !isValid
+  const isValid = isValidYouTubeUrl(url);
+  const showError = touched && url.length > 0 && !isValid;
 
   async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
+    e.preventDefault();
     if (!isValid) {
-      setTouched(true)
-      return
+      setTouched(true);
+      return;
     }
 
-    const videoId = extractVideoId(url)
-    setThumbnailUrl(videoId ? getThumbnailUrl(videoId) : null)
-    setStatus('loading')
+    const videoId = extractVideoId(url);
+    setThumbnailUrl(videoId ? getThumbnailUrl(videoId) : null);
+    setErrorMessage(null);
+    setStatus("loading");
 
-    // Mock backend — заменить реальным API позже
-    await new Promise((resolve) => setTimeout(resolve, 3800))
+    try {
+      // На проде — только реальный API. В dev оставлен фоллбек на мок,
+      // чтобы фронт можно было гонять без ключей Supadata/Gemini.
+      if (process.env.NODE_ENV !== "production") {
+        try {
+          const data = await summarizeUrl(url);
+          setSummary(data);
+          setStatus("result");
+          return;
+        } catch (err) {
+          console.warn("summarizeUrl упал в dev, fallback на мок:", err);
+        }
+      } else {
+        const data = await summarizeUrl(url);
+        setSummary(data);
+        setStatus("result");
+        return;
+      }
 
-    setSummary(getMockSummary())
-    setStatus('result')
+      // dev-фоллбек, если бэкенд недоступен
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      setSummary(getMockSummary());
+      setStatus("result");
+    } catch (err) {
+      const msg =
+        err instanceof SummarizeError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Не удалось получить саммари. Попробуйте ещё раз.";
+      setErrorMessage(msg);
+      setStatus("idle");
+    }
   }
 
   function handleReset() {
-    setStatus('idle')
-    setSummary(null)
-    setThumbnailUrl(null)
-    setUrl('')
-    setTouched(false)
+    setStatus("idle");
+    setSummary(null);
+    setThumbnailUrl(null);
+    setUrl("");
+    setTouched(false);
+    setErrorMessage(null);
   }
 
-  if (status === 'loading') {
+  if (status === "loading") {
     return (
       <div className="w-full max-w-2xl">
         <LoadingState />
       </div>
-    )
+    );
   }
 
-  if (status === 'result' && summary) {
+  if (status === "result" && summary) {
     return (
       <div className="w-full max-w-2xl">
         <ResultCard
@@ -62,7 +100,7 @@ export function Summarizer() {
           onReset={handleReset}
         />
       </div>
-    )
+    );
   }
 
   return (
@@ -87,13 +125,24 @@ export function Summarizer() {
               inputMode="url"
               autoComplete="off"
               value={url}
-              onChange={(e) => setUrl(e.target.value)}
+              onChange={(e) => {
+                setUrl(e.target.value);
+                if (errorMessage) setErrorMessage(null);
+              }}
               onBlur={() => setTouched(true)}
               placeholder="https://www.youtube.com/watch?v=..."
-              aria-invalid={showError}
-              aria-describedby={showError ? 'yt-error' : undefined}
+              aria-invalid={showError || !!errorMessage}
+              aria-describedby={
+                showError
+                  ? "yt-error"
+                  : errorMessage
+                    ? "yt-server-error"
+                    : undefined
+              }
               className={`glass h-14 w-full rounded-full border px-6 text-foreground placeholder:text-muted-foreground/70 outline-none transition-all focus:border-primary focus:shadow-[0_0_24px] focus:shadow-primary/30 ${
-                showError ? 'border-destructive' : 'border-border'
+                showError || errorMessage
+                  ? "border-destructive"
+                  : "border-border"
               }`}
             />
           </div>
@@ -116,7 +165,17 @@ export function Summarizer() {
             Пожалуйста, введите корректную ссылку на YouTube.
           </p>
         )}
+
+        {errorMessage && !showError && (
+          <p
+            id="yt-server-error"
+            className="animate-fade-in mt-3 pl-6 text-sm text-destructive"
+            role="alert"
+          >
+            {errorMessage}
+          </p>
+        )}
       </form>
     </div>
-  )
+  );
 }
