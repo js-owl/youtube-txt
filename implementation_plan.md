@@ -1,7 +1,11 @@
 # Implementation Plan
 
 [Reference]
-**Эталонное видео для ручной проверки:** `https://www.youtube.com/watch?v=c9DIoSNoQNs` — ID `c9DIoSNoQNs`. Именно на нём прогоняются все `curl`-сценарии и UI-проверка из раздела [Testing].
+**Эталонные видео для ручной проверки:**
+
+- `https://www.youtube.com/watch?v=kJQP7kiw5Fk` — ID `kJQP7kiw5Fk` (Luis Fonsi — Despacito). **Основной happy-path**: есть и oEmbed, и транскрипт, и длинный текст для саммари. Именно на нём прогоняются все 200-OK сценарии.
+- `https://www.youtube.com/watch?v=0hg1Abq9OKo` — ID `0hg1Abq9OKo`. Альтернативный happy-path (короткий транскрипт, без заголовка в oEmbed).
+- `https://www.youtube.com/watch?v=c9DIoSNoQNs` — ID `c9DIoSNoQNs`. **Только для негативного сценария**: Supadata возвращает 206 `transcript-unavailable` — удобно проверить, что API корректно отвечает 400 «Для этого видео недоступны текстовые субтитры».
 
 **Переменные окружения (должны быть заданы в `.env.local` для локального дев-сервера и в Vercel → Settings → Environment Variables для прода):**
 
@@ -125,15 +129,28 @@ export type SummarizeApiResponse = SummarizeApiSuccess | SummarizeApiError;
 **Ручная проверка (минимум, что нужно прогнать):**
 
 1. Локальный дев-сервер: `pnpm dev` (или `npm run dev`).
-2. `curl -X POST http://localhost:3000/api/summarize -H "Content-Type: application/json" -d '{"url":"https://www.youtube.com/watch?v=c9DIoSNoQNs"}'` — ожидаем 200 и JSON c `success: true` (это эталонное видео из раздела [Reference]).
-3. Невалидный URL (например, `not-a-url`) → 400 + понятный текст.
-4. Видео без субтитров → 400/404 + «Для этого видео недоступны текстовые субтитры».
-5. Очистка `GEMINI_API_KEY` в `.env.local` и перезапуск — 500 + лог в `console.error`.
-6. UI-проверка: вставить эталонную ссылку → увидеть `LoadingState` (с тем же скелетоном) → увидеть `ResultCard` с реальными данными → кнопка «Сделать ещё одно» возвращает к форме.
+2. **Happy-path (основной):** `curl -X POST http://localhost:3000/api/summarize -H "Content-Type: application/json" -d '{"url":"https://www.youtube.com/watch?v=kJQP7kiw5Fk"}'` — ожидаем 200 и JSON c `success: true`, в `data.title` — `Luis Fonsi - Despacito ft. Daddy Yankee`, `data.channel` — `LuisFonsiVEVO`, `data.mainThought` — осмысленное саммари на русском, `data.keyPoints` — массив из 3–5 пунктов.
+3. **Happy-path (альтернативный):** то же для `0hg1Abq9OKo` — ожидаем 200, `data.title` может быть дефолтным (oEmbed опционален).
+4. **Видео без субтитров:** `c9DIoSNoQNs` → 400 + `error: "Для этого видео недоступны текстовые субтитры"`.
+5. **Невалидный URL:** `not-a-url` → 400 + `error: "Неверный формат ссылки YouTube"`.
+6. **Пустой body:** `{}` → 400 + `error: "URL не предоставлен"`.
+7. **Холодный старт Supadata (DNS):** первый запрос после простоя может 1–2 раза вернуть 502 + `error: "Не удалось связаться с сервисом субтитров. Проверьте интернет-соединение и попробуйте ещё раз."` — это **ожидаемое поведение**: встроенные ретраи (2 попытки) уже отработали, клиенту достаточно просто кликнуть «Создать» ещё раз.
+8. **Очистка `GEMINI_API_KEY` в `.env.local` и перезапуск** — 500 + лог в `console.error`, на UI — «Не удалось сгенерировать краткое содержание…».
+9. **UI-проверка:** вставить эталонную ссылку → увидеть `LoadingState` (с тем же скелетоном) → увидеть `ResultCard` с реальными данными → кнопка «Сделать ещё одно» возвращает к форме.
 
 **Unit-тесты:** проект не использует Jest/Vitest (в `package.json` их нет, в файловой структуре — тоже). Не добавляем новый test-runner в рамках этой задачи — это вне scope PRD. Если потребуется — отдельной задачей.
 
 **Типизация:** прогон `pnpm tsc --noEmit` (или `npx tsc --noEmit`) — бэкенд не должен ломать строгий режим (`strict: true` в `tsconfig.json`). `next.config.mjs` сейчас имеет `ignoreBuildErrors: true`, но это не повод расслабляться.
+
+[Resilience]
+
+Бэкенд `/api/summarize` устойчив к типовым транзиентным проблемам:
+
+- **`fetchWithRetry(url, init, { timeoutMs, retries, delayMs })`** — обёртка над глобальным `fetch` с тремя гарантиями: (1) **таймаут** через `AbortController` (по умолчанию 15 сек), (2) **ретраи** с экспоненциальной задержкой (по умолчанию 2 повтора: 500мс → 1000мс), (3) **умная стратегия**: ретраим только сетевые ошибки и HTTP 5xx/429, остальные ответы (200/4xx кроме 429) возвращаем сразу.
+  - Применяется к `fetchOEmbed` (`timeoutMs: 5_000, retries: 1`) и `fetchTranscript` (`timeoutMs: 15_000, retries: 2`).
+- **`withTimeout(promise, ms, label)`** — обёртка для Gemini SDK, который не принимает `httpOptions.timeout` на `generateContent`. Таймаут по умолчанию 30 сек.
+- **`mapError(err)`** — единая точка маппинга внутренних ошибок в человекочитаемые сообщения и HTTP-коды. Особенно важно для **undici-ошибок** (встроенный `fetch` в Node.js): безликий `TypeError: fetch failed` (возникает при DNS-проблемах, ECONNRESET, TLS-ошибках) превращается в `502` + «Не удалось связаться с сервисом субтитров. Проверьте интернет-соединение и попробуйте ещё раз.». Таймауты → `504` + «Сервис не ответил вовремя…». Ошибки Gemini SDK → `502` + «Не удалось сгенерировать краткое содержание…».
+- **Без таймаута/ретраев** в проде это выглядит как зависший на минуту запрос или каскад 500-ок при первом обращении к Supadata из РФ-сетей (DNS через `100.64.0.1` нередко таймаутится на холодную).
 
 [Implementation Order]
 
@@ -145,7 +162,7 @@ export type SummarizeApiResponse = SummarizeApiSuccess | SummarizeApiError;
 6. **Добавить `.env.example`** с шаблоном `SUPADATA_API_KEY` и `GEMINI_API_KEY` (без реальных значений).
 7. **Обновить `components/summarizer.tsx`** — заменить мок на вызов `summarizeUrl(url)`, обработать ошибки, оставить дев-фоллбек на мок при отсутствии ключей.
 8. **Прогнать `tsc --noEmit` и `pnpm dev`** — локальная проверка, что фронт + бэкенд дружат.
-9. **Прогнать `curl`-сценарии** из раздела Testing, используя эталонную ссылку `https://www.youtube.com/watch?v=c9DIoSNoQNs`, чтобы убедиться в обработке edge-cases.
+9. **Прогнать `curl`-сценарии** из раздела Testing: happy-path на `kJQP7kiw5Fk` (или `0hg1Abq9OKo`), edge-cases — `c9DIoSNoQNs` (без субтитров), `not-a-url`, пустой body.
 10. **Закоммитить**, прописать env-переменные в Vercel (Settings → Environment Variables), задеплоить.
 
 **Дополнительно (опционально, после первого успешного деплоя):**

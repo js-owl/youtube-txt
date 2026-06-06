@@ -21,6 +21,74 @@ const SUPADATA_URL = "https://api.supadata.ai/v1/youtube/transcript";
 const OEMBED_URL = "https://www.youtube.com/oembed";
 const MIN_TRANSCRIPT_LENGTH = 50;
 
+// Сетевые настройки: защита от транзиентных DNS/сетевых ошибок и зависаний.
+// На практике Supadata иногда не резолвится с первого раза (особенно в RU),
+// а без таймаута fetch может висеть до 5 минут.
+const FETCH_TIMEOUT_MS = 15_000;
+const FETCH_RETRIES = 2;
+const FETCH_RETRY_DELAY_MS = 500;
+const GEMINI_TIMEOUT_MS = 30_000;
+
+// fetch с таймаутом и ретраями. Ретраим: любые сетевые ошибки (DNS, ECONNRESET,
+// TLS, abort по таймауту) + HTTP 5xx/429.
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit = {},
+  opts: { timeoutMs?: number; retries?: number; delayMs?: number } = {},
+): Promise<Response> {
+  const timeoutMs = opts.timeoutMs ?? FETCH_TIMEOUT_MS;
+  const retries = opts.retries ?? FETCH_RETRIES;
+  const delayMs = opts.delayMs ?? FETCH_RETRY_DELAY_MS;
+
+  let lastError: unknown = new Error("fetch failed");
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: ac.signal });
+      clearTimeout(timer);
+      if (res.status >= 500 || res.status === 429) {
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, delayMs * 2 ** attempt));
+          continue;
+        }
+        return res; // последняя попытка — отдаём как есть
+      }
+      return res;
+    } catch (err) {
+      clearTimeout(timer);
+      lastError = err;
+      if (attempt < retries) {
+        await new Promise((r) => setTimeout(r, delayMs * 2 ** attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("fetch failed");
+}
+
+// Оборачивает произвольный promise в таймаут. Используем для Gemini SDK,
+// который сам не принимает httpOptions.timeout на generateContent.
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error(`${label}: превышен таймаут ${ms} мс`)),
+      ms,
+    );
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 const SYSTEM_PROMPT = `Ты — профессиональный редактор. Проанализируй транскрипт видео и сделай краткую, ёмкую, полезную выжимку.
 
 Правила:
@@ -45,10 +113,7 @@ async function fetchOEmbed(videoId: string): Promise<OEmbedInfo> {
     `https://www.youtube.com/watch?v=${videoId}`,
   )}&format=json`;
   try {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 5000);
-    const res = await fetch(url, { signal: ac.signal });
-    clearTimeout(timer);
+    const res = await fetchWithRetry(url, {}, { timeoutMs: 5_000, retries: 1 });
     if (!res.ok) throw new Error(`oEmbed ${res.status}`);
     const data: unknown = await res.json();
     if (!isOEmbedResponse(data)) throw new Error("oEmbed: неожиданный формат");
@@ -65,9 +130,11 @@ async function fetchTranscript(videoId: string): Promise<string> {
   }
 
   const url = `${SUPADATA_URL}?videoId=${encodeURIComponent(videoId)}`;
-  const res = await fetch(url, {
-    headers: { "x-api-key": apiKey },
-  });
+  const res = await fetchWithRetry(
+    url,
+    { headers: { "x-api-key": apiKey } },
+    { timeoutMs: 15_000, retries: 2 },
+  );
 
   // Supadata отдаёт 206 Partial Content с телом-ошибкой, если транскрипта нет.
   if (res.status === 206) {
@@ -131,14 +198,18 @@ async function generateSummary(transcript: string): Promise<{
 }> {
   const ai = getGemini();
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: `${SYSTEM_PROMPT}\n\nТранскрипт:\n${transcript}`,
-    config: {
-      responseMimeType: "application/json",
-      temperature: 0.2,
-    },
-  });
+  const response = await withTimeout(
+    ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: `${SYSTEM_PROMPT}\n\nТранскрипт:\n${transcript}`,
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.2,
+      },
+    }),
+    GEMINI_TIMEOUT_MS,
+    "Gemini",
+  );
 
   const raw = response.text;
   if (!raw) {
@@ -169,6 +240,71 @@ type ErrorBody = { success: false; error: string };
 function errorResponse(message: string, status: number) {
   const body: ErrorBody = { success: false, error: message };
   return NextResponse.json(body, { status });
+}
+
+// Превращает внутренние ошибки в человекочитаемые сообщения + HTTP-код.
+// Особенно важно мапить безликие undici-ошибки («fetch failed», «aborted»,
+// «ENOTFOUND», «таймаут») в понятные формулировки для UI.
+function mapError(err: unknown): { message: string; status: number } {
+  const raw = err instanceof Error ? err.message : String(err);
+  const lower = raw.toLowerCase();
+
+  // Валидация ввода
+  if (lower.includes("не предоставлен") || lower.includes("неверный формат")) {
+    return { message: raw, status: 400 };
+  }
+  if (lower.includes("субтитры") || lower.includes("мало текста")) {
+    return { message: raw, status: 400 };
+  }
+  if (lower.includes("перегружен") || lower.includes("rate")) {
+    return { message: raw, status: 429 };
+  }
+  if (lower.includes("api_key") || lower.includes("ключ")) {
+    return { message: raw, status: 500 };
+  }
+
+  // Сетевые / DNS-ошибки от fetch (undici бросает обобщённый «fetch failed»)
+  if (
+    lower.includes("fetch failed") ||
+    lower.includes("enotfound") ||
+    lower.includes("econnreset") ||
+    lower.includes("econnrefused") ||
+    lower.includes("getaddrinfo") ||
+    lower.includes("network")
+  ) {
+    return {
+      message:
+        "Не удалось связаться с сервисом субтитров. Проверьте интернет-соединение и попробуйте ещё раз.",
+      status: 502,
+    };
+  }
+
+  // Таймауты (AbortController или наш withTimeout)
+  if (
+    lower.includes("aborted") ||
+    lower.includes("превышен таймаут") ||
+    lower.includes("timeout")
+  ) {
+    return {
+      message:
+        "Сервис не ответил вовремя. Попробуйте ещё раз через пару секунд.",
+      status: 504,
+    };
+  }
+
+  // Специфичные ошибки Gemini SDK — не показываем сырой текст
+  if (lower.includes("gemini")) {
+    return {
+      message:
+        "Не удалось сгенерировать краткое содержание. Попробуйте ещё раз.",
+      status: 502,
+    };
+  }
+
+  return {
+    message: raw || "Внутренняя ошибка сервера",
+    status: 500,
+  };
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -215,24 +351,8 @@ export async function POST(req: Request): Promise<NextResponse> {
       { status: 200 },
     );
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Внутренняя ошибка сервера";
+    const { message, status } = mapError(err);
     console.error("[/api/summarize] error:", err);
-
-    const lower = message.toLowerCase();
-    let status = 500;
-    if (
-      lower.includes("не предоставлен") ||
-      lower.includes("неверный формат")
-    ) {
-      status = 400;
-    } else if (lower.includes("субтитры") || lower.includes("мало текста")) {
-      status = 400;
-    } else if (lower.includes("перегружен") || lower.includes("rate")) {
-      status = 429;
-    } else if (lower.includes("api_key") || lower.includes("ключ")) {
-      status = 500;
-    }
     return errorResponse(message, status);
   }
 }
