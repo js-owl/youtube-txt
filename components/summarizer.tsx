@@ -124,7 +124,7 @@ export function Summarizer() {
   return (
     <div className="animate-fade-up flex w-full max-w-2xl flex-col items-center">
       <div className="mb-6 flex w-full justify-end">
-        <AuthButton />
+        <AuthButton onAuthChange={refreshMe} />
       </div>
 
       <h1 className="text-stroke text-center font-heading text-7xl font-black uppercase leading-none tracking-tight sm:text-8xl md:text-9xl">

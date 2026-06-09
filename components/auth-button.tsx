@@ -6,7 +6,11 @@ import { getMe, signOut } from "@/lib/auth/client";
 import type { MeResponse } from "@/lib/auth/types";
 import { AuthDialog } from "./auth-dialog";
 
-export function AuthButton() {
+type AuthButtonProps = {
+  onAuthChange?: () => void;
+};
+
+export function AuthButton({ onAuthChange }: AuthButtonProps) {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -14,6 +18,11 @@ export function AuthButton() {
   async function refresh() {
     const res = await getMe();
     setMe(res);
+  }
+
+  async function handleAuthChange() {
+    await refresh();
+    onAuthChange?.();
   }
 
   useEffect(() => {
@@ -28,7 +37,7 @@ export function AuthButton() {
       // ignore
     } finally {
       setSigningOut(false);
-      await refresh();
+      await handleAuthChange();
     }
   }
 
@@ -53,7 +62,7 @@ export function AuthButton() {
         <AuthDialog
           open={dialogOpen}
           onOpenChange={setDialogOpen}
-          onAuthChange={refresh}
+          onAuthChange={handleAuthChange}
         />
       </>
     );
