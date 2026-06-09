@@ -71,14 +71,14 @@ export function AuthDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onOpenChange(false);
       }}
       role="dialog"
       aria-modal="true"
     >
-      <div className="glass relative w-full max-w-md rounded-3xl border border-border p-6 shadow-2xl sm:p-8">
+      <div className="relative w-full max-w-md rounded-3xl border border-border bg-card p-6 shadow-2xl sm:p-8">
         <button
           type="button"
           onClick={() => onOpenChange(false)}
