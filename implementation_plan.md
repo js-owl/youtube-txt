@@ -1,171 +1,233 @@
-# Implementation Plan
+# Implementation Plan: Supabase Auth + Credits
 
 [Reference]
-**Эталонные видео для ручной проверки:**
 
-- `https://www.youtube.com/watch?v=kJQP7kiw5Fk` — ID `kJQP7kiw5Fk` (Luis Fonsi — Despacito). **Основной happy-path**: есть и oEmbed, и транскрипт, и длинный текст для саммари. Именно на нём прогоняются все 200-OK сценарии.
-- `https://www.youtube.com/watch?v=0hg1Abq9OKo` — ID `0hg1Abq9OKo`. Альтернативный happy-path (короткий транскрипт, без заголовка в oEmbed).
-- `https://www.youtube.com/watch?v=c9DIoSNoQNs` — ID `c9DIoSNoQNs`. **Только для негативного сценария**: Supadata возвращает 206 `transcript-unavailable` — удобно проверить, что API корректно отвечает 400 «Для этого видео недоступны текстовые субтитры».
+**Supabase project (уже создан):**
 
-**Переменные окружения (должны быть заданы в `.env.local` для локального дев-сервера и в Vercel → Settings → Environment Variables для прода):**
+- Project ID: `tnewmooaoytxvupzzyga`
+- Project URL: `https://tnewmooaoytxvupzzyga.supabase.co`
+- Region: `eu-north-1`
+- Status: `ACTIVE_HEALTHY`
+- Organization: `sowl` (`chtqbaucliafshfuvkmc`)
+- Publishable key (новый формат): `sb_publishable_A3lxeb91IjabfkM2GBd-UA_FA8E8V-L`
+- Legacy anon key: `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRuZXdtb29hb3l0eHZ1cHp6eWdhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA5MzY0NjgsImV4cCI6MjA5NjUxMjQ2OH0.QHXbaI5EhmCAXdG916WENtwdQe4Mav2CDUJB0zkkOFI` (используем только в крайнем случае, рекомендован publishable)
 
-- `SUPADATA_API_KEY` — ключ Supadata.
-- `GEMINI_API_KEY` — ключ Google Gemini.
+**Текущая БД:** пустая (миграций нет, таблиц нет).
 
-**Важно по безопасности:** реальные значения ключей **никогда не коммитятся в репозиторий** и **не записываются в файлы плана/исходников** — только локально в `.env.local` (он уже в `.gitignore`). Если ключи где-либо засветились (чаты, скриншоты, логи) — перевыпустите их в личных кабинетах Supadata и Google AI Studio перед продакшен-деплоем.
+**Безопасность:** значения ключей **никогда** не пишем в исходники/план/коммиты. Только в `.env.local` (он в `.gitignore`). Publishable-ключ безопасно светить в клиентском бандле, но всё равно кладём его в env, чтобы ротировать без правок кода.
+
+**Email-подтверждение:** по требованию пользователя — отключено. Функционал подтверждения почты будет добавлен позднее отдельной задачей. Текущая регистрация ожидает, что `signUp` сразу возвращает сессию. Если в Supabase включено подтверждение — сессия не придёт и пользователю нужно снять «Confirm email» вручную в Dashboard.
+
+**Эталонное видео для тестирования (добавил пользователь):**
+
+- `https://www.youtube.com/watch?v=xITLHyM1TUM` — ID `xITLHyM1TUM`. Используем как основной happy-path наравне с `kJQP7kiw5Fk`. Ожидаемо: 200, `ResultCard` с реальными данными, списание 1 кредита. Этот ID должен попасть в `cURL`-сценарии и в `chrome-devtools` E2E-тест в разделе [Testing].
 
 [Overview]
-Добавить в существующий Next.js-проект (App Router, React 19, TS) серверный Route Handler `POST /api/summarize`, который по YouTube-ссылке получает транскрипт через Supadata, передаёт его в Google Gemini и возвращает структурированный JSON с саммари, точно совместимый с текущей формой `Summary` на фронтенде.
 
-Бэкенд реализуется «внутри» Next.js как serverless Route Handler, без отдельного сервера — это позволяет остаться в рамках одного бесплатного проекта Vercel и переиспользовать уже сконфигурированный TypeScript/Tailwind/ShadCN-стек. Все секреты (Supadata, Gemini) хранятся в переменных окружения и не попадают в клиентский бандл. На фронтенде мок-данные в `lib/mock-summary.ts` заменяются реальным вызовом `/api/summarize`; тип `Summary` расширяется полем `source` для прозрачности (mock vs api) и поле `mainIdea` остаётся единственным «главная мысль» (маппится с `mainThought` бэкенда).
+Добавить в существующий Next.js-проект (App Router, React 19, TS) систему регистрации/входа через Supabase Auth и кредитную систему (5 кредитов на старте, −1 за каждое саммари). Бэкенд — Route Handlers внутри Next.js (`/api/auth/signup|signin|signout|me`) на `@supabase/ssr` с безопасной работой с cookies. Баланс хранится в таблице `profiles`, атомарное списание — через `SECURITY DEFINER` RPC `consume_credit` (защита от гонок). Существующий `POST /api/summarize` интегрируется: списывает кредит, при ошибке возвращает. На фронте — кнопка «Войти / Создать аккаунт» (для гостей) и email+баланс+«Выйти» (для залогиненых), плюс модалка входа/регистрации.
 
 [Types]
-Единый тип `Summary` (фронт) расширяется и переезжает в `lib/summary.ts`; `lib/mock-summary.ts` остаётся как fallback для дев-режима, но переэкспортирует тип. Дополнительно — узкий тип `SummarizeApiResponse` для безопасного парсинга ответа сервера.
 
-**`lib/summary.ts` (новый файл)**
+**`lib/supabase/types.ts` (новый)** — тип профиля:
 
 ```ts
-export type Summary = {
-  title: string;
-  channel: string;
-  duration: string;
-  mainIdea: string;
-  keyPoints: string[];
+export type Profile = {
+  id: string; // uuid = auth.users.id
+  email: string;
+  credits: number; // целое >= 0
+  created_at: string;
+  updated_at: string;
 };
-
-export type SummarizeApiSuccess = {
-  success: true;
-  data: {
-    title: string;
-    channel: string;
-    duration: string;
-    mainThought: string;
-    keyPoints: string[];
-  };
-};
-
-export type SummarizeApiError = {
-  success: false;
-  error: string;
-};
-
-export type SummarizeApiResponse = SummarizeApiSuccess | SummarizeApiError;
 ```
 
-**Бэкенд не типизирует внешние ответы как свои доменные модели.** Ответы Supadata и oEmbed читаются как `unknown` и проходят через узкие локальные type-guard'ы (`isSupadataTranscript`, `isOEmbedResponse`) — защита от поломки при изменениях схемы внешних API.
+**`lib/auth/types.ts` (новый)** — DTO для API:
 
-**`SummarizeRequest` (внутри route.ts):** `{ url: string }` — валидируется вручную (одно поле, простая проверка).
+```ts
+export type SignUpRequest = { email: string; password: string };
+export type SignInRequest = { email: string; password: string };
+
+export type AuthSuccessResponse = {
+  success: true;
+  user: { id: string; email: string };
+  profile: { email: string; credits: number };
+};
+
+export type AuthErrorResponse = {
+  success: false;
+  error: string;
+  code?: string;
+};
+export type AuthResponse = AuthSuccessResponse | AuthErrorResponse;
+
+export type MeResponse =
+  | {
+      authenticated: true;
+      user: { id: string; email: string };
+      profile: { email: string; credits: number };
+    }
+  | { authenticated: false };
+```
+
+**`SummarizeError` (расширение):** добавляем `code?: 'AUTH_REQUIRED' | 'NO_CREDITS' | ...`.
 
 [Files]
 
 **Новые файлы:**
 
-- `app/api/summarize/route.ts` — POST handler, вся серверная логика (валидация URL, oEmbed, Supadata, Gemini, обработка ошибок, маппинг в `Summary`).
-- `lib/summary.ts` — общие типы `Summary`, `SummarizeApiResponse` (success/error варианты), type-guards для ответов Supadata и oEmbed.
-- `lib/summarize-client.ts` — тонкий клиент-обёртка над `fetch('/api/summarize')` для фронтенда: парсит ответ, нормализует в `Summary`, выбрасывает типизированную ошибку с человекочитаемым сообщением (берётся из бэкенда).
-- `.env.example` — шаблон с `SUPADATA_API_KEY=`, `GEMINI_API_KEY=` (реальный `.env.local` остаётся в `.gitignore`).
-- `app/api/summarize/README.md` — короткая инструкция по переменным окружения и поведению endpoint'а.
+- `lib/supabase/server.ts` — `createServerSupabase()`: per-request `createServerClient` с `cookies()` из `next/headers`.
+- `lib/supabase/client.ts` — `createBrowserSupabase()`: `createBrowserClient` (singleton через `globalThis` для HMR).
+- `lib/supabase/middleware.ts` — `updateSession(request)`: refresh токенов (из доки `@supabase/ssr`).
+- `lib/supabase/types.ts` — тип `Profile`.
+- `lib/auth/types.ts` — DTO.
+- `lib/auth/client.ts` — клиентские хелперы: `signUp`, `signIn`, `signOut`, `getMe` (тонкие обёртки над `fetch` к `/api/auth/*`).
+- `lib/auth/validation.ts` — zod-схемы `SignUpSchema`, `SignInSchema` (email, password ≥ 8).
+- `middleware.ts` (в корне) — вызывает `updateSession`, matcher исключает статику.
+- `app/api/auth/signup/route.ts` — POST: валидация → `signUp` → `get_my_profile` → ответ.
+- `app/api/auth/signin/route.ts` — POST: валидация → `signInWithPassword` → `get_my_profile` → ответ.
+- `app/api/auth/signout/route.ts` — POST: `signOut` → 200.
+- `app/api/auth/me/route.ts` — GET: `getUser` → профиль или `{ authenticated: false }`.
+- `components/auth-dialog.tsx` — модалка (overlay + card) с вкладками «Вход» / «Регистрация». Поля email+password, submit, переключатель, ошибки, Escape-закрытие, клик по overlay.
+- `components/auth-button.tsx` — client component: тянет `/api/auth/me`. Если гость → кнопка «Войти / Создать аккаунт». Если залогинен → карточка: иконка, email, «💎 N кредитов», icon-button «Выйти». При `onAuthChange` перезапрашивает `/me`.
+- `supabase/migrations/20260609000000_init_auth_and_credits.sql` — таблица `profiles`, RLS, триггер на `auth.users insert`, RPC `consume_credit`/`refund_credit`/`get_my_profile`.
 
 **Изменяемые файлы:**
 
-- `lib/mock-summary.ts` — теперь только массив моков и функция `getMockSummary()`, тип `Summary` импортируется из `lib/summary.ts` и реэкспортируется (для обратной совместимости с импортом в `result-card.tsx` и `summarizer.tsx`).
-- `components/summarizer.tsx` — в `handleSubmit` убрать `setTimeout` и мок; вместо этого вызвать `summarizeUrl(url)` из `lib/summarize-client.ts`; на время запроса отображать `LoadingState`; ошибки API показывать через `aria-live` блок под полем ввода (использовать уже существующий `showError`-паттерн). Не откатываться на мок в продакшене, но в `NODE_ENV !== 'production'` оставить fallback на `getMockSummary()`, чтобы дев мог работать без ключей.
-- `next.config.mjs` — без изменений (server-runtime настраивается на уровне route).
-- `package.json` — добавить зависимость `@google/genai` (требуется по PRD; в текущем `package.json` её нет).
+- `package.json` — добавить `@supabase/supabase-js` и `@supabase/ssr` (через `pnpm add`).
+- `.env.example` — добавить `NEXT_PUBLIC_SUPABASE_URL=` и `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=`.
+- `components/summarizer.tsx` — рендерить `<AuthButton />` над заголовком. Блокировать «Создать» если `!authenticated || credits === 0`, подсказки. Обрабатывать `SummarizeError.code` (`AUTH_REQUIRED`, `NO_CREDITS`).
+- `app/api/summarize/route.ts` — в начале: `getUser` → 401 `AUTH_REQUIRED`; затем `rpc('consume_credit')` → 402 `NO_CREDITS`; в `catch` после успешного consume → `rpc('refund_credit')`.
+- `lib/summarize-client.ts` — добавить `code?: string` в `SummarizeError`.
 
 **Удаляемые файлы:** нет.
 
 [Functions]
 
-**Новые функции:**
+**Новые:**
 
-1. `app/api/summarize/route.ts`
-   - `export async function POST(req: Request): Promise<NextResponse>` — основной обработчик.
-     - Шаги: парсинг JSON → валидация `url` → извлечение `videoId` (через `extractVideoId` из `lib/youtube.ts`) → параллельные `Promise.all` к YouTube oEmbed и Supadata → проверка длины транскрипта → вызов `ai.models.generateContent` (Gemini 3 Flash) с `responseMimeType: 'application/json'` → парсинг JSON из `response.text` → маппинг в `Summary` → ответ `{ success: true, data }`. Ошибки — оборачиваются в `try/catch`, возвращают `{ success: false, error }` с подходящим `status` (400 для невалидного URL, 404 для «нет субтитров», 429 для rate-limit, 500 для остального).
-   - Внутренние хелперы (без экспорта, область файла):
-     - `extractVideoId(url: string): string | null` — переэкспорт из `lib/youtube.ts` (или вызов напрямую, чтобы не дублировать).
-     - `fetchOEmbed(videoId: string): Promise<{ title: string; channel: string }>` — GET на `https://www.youtube.com/oembed?url=...&format=json`, таймаут через `AbortController` (5 сек), при ошибке возвращает дефолты `{ title: 'YouTube-видео', channel: '' }`.
-     - `fetchTranscript(videoId: string): Promise<string>` — GET на `https://api.supadata.ai/v1/youtube/transcript?videoId=...` с заголовком `x-api-key`. Обрабатывает HTTP-ошибки и специфичный код `no_transcript`/`subtitle_disabled` (контракт Supadata нужно сверить с их докой, при необходимости — уточнить). Возвращает склеенный `text` из `content` (Supadata возвращает массив `{ text, offset, duration }`). Если итоговая строка короче ~50 символов — бросает ошибку с понятным сообщением.
-     - `buildSummaryPrompt(transcript: string): string` — формирует системный промпт для Gemini с инструкцией вернуть JSON `{ mainThought, keyPoints: string[] }`. Температура 0.2, строго 3–5 пунктов.
-     - `safeParseGeminiJson(text: string): { mainThought: string; keyPoints: string[] }` — парсит JSON, валидирует наличие и типы полей; при невалидном ответе бросает `Error('Не удалось разобрать ответ модели')`.
+1. `lib/supabase/server.ts` — `createServerSupabase(): Promise<SupabaseClient>` (per-request, `cookies().getAll/setAll`).
+2. `lib/supabase/client.ts` — `createBrowserSupabase(): SupabaseClient` (singleton через `globalThis`).
+3. `lib/supabase/middleware.ts` — `updateSession(request: NextRequest): Promise<NextResponse>`.
+4. `middleware.ts` — `middleware(request)`, matcher `['/((?!_next/static|_next/image|favicon.ico|images/.*|icon.*).*)']`.
+5. `lib/auth/validation.ts` — `SignUpSchema`, `SignInSchema` (zod).
+6. `lib/auth/client.ts` — `signUp(email, password)`, `signIn(email, password)`, `signOut()`, `getMe()` — тонкие fetch-обёртки.
+7. `app/api/auth/signup/route.ts` — `POST(req)`. Шаги: parse → zod → `supabase.auth.signUp({ email, password })` → если `error`, маппинг кодов (`user_already_exists` → «Пользователь с таким email уже зарегистрирован», иначе общее «Не удалось зарегистрироваться») → `rpc('get_my_profile')` → ответ.
+8. `app/api/auth/signin/route.ts` — `POST(req)`. Шаги: parse → zod → `signInWithPassword` → ошибка → «Неверный email или пароль» (единое сообщение) → `get_my_profile` → ответ.
+9. `app/api/auth/signout/route.ts` — `POST()`. `signOut()` → 200 `{ success: true }`.
+10. `app/api/auth/me/route.ts` — `GET()`. `getUser` → нет/ошибка → 200 `{ authenticated: false }`. Иначе → `get_my_profile` → `{ authenticated: true, ... }`.
+11. `app/api/summarize/route.ts` — модификация (см. ниже).
+12. `components/auth-dialog.tsx` — `AuthDialog({ open, onOpenChange, onAuthChange })`. Стейт: `mode: 'signin' | 'signup'`, `email`, `password`, `error`, `loading`. Escape + click-outside закрывает. На успех вызывает `onAuthChange()` и `onOpenChange(false)`.
+13. `components/auth-button.tsx` — `AuthButton()`. Стейт: `status: 'loading' | 'guest' | 'authed'`. На маунт → `getMe()`. Рендер: гость — кнопка «Войти / Создать аккаунт» (открывает диалог); залогинен — карточка с email/балансом/icon-кнопкой выхода. Выход → `signOut()` → рефетч.
+14. `supabase/migrations/20260609000000_init_auth_and_credits.sql` — DDL/DML:
+    - `create table public.profiles (id uuid primary key references auth.users(id) on delete cascade, email text not null, credits int not null default 5 check (credits >= 0), created_at timestamptz not null default now(), updated_at timestamptz not null default now())`.
+    - `alter table public.profiles enable row level security`.
+    - `create policy "select own profile" on public.profiles for select using (auth.uid() = id)`.
+    - `create policy "update own profile" on public.profiles for update using (auth.uid() = id) with check (auth.uid() = id and credits >= 0)`.
+    - `create or replace function public.handle_new_user() returns trigger language plpgsql security definer set search_path = public as $$ begin insert into public.profiles(id, email) values (new.id, new.email); return new; end; $$;`.
+    - `create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();`.
+    - `create or replace function public.consume_credit() returns boolean language plpgsql security definer set search_path = public as $$ declare ok boolean; begin update public.profiles set credits = credits - 1, updated_at = now() where id = auth.uid() and credits > 0 returning true into ok; return coalesce(ok, false); end; $$;`.
+    - `create or replace function public.refund_credit() returns void language plpgsql security definer set search_path = public as $$ begin update public.profiles set credits = credits + 1, updated_at = now() where id = auth.uid() and credits < 2147483647; end; $$;`.
+    - `create or replace function public.get_my_profile() returns table(email text, credits int) language sql security definer set search_path = public as $$ select email, credits from public.profiles where id = auth.uid(); $$;`.
+    - `grant execute on function public.consume_credit() to authenticated;` (аналогично для `refund_credit`, `get_my_profile`).
+    - `grant select, update on public.profiles to authenticated;`.
 
-2. `lib/summarize-client.ts`
-   - `export async function summarizeUrl(url: string): Promise<Summary>` — POST на `/api/summarize` с `{ url }`. Проверяет `Content-Type: application/json`, парсит тело, делает discriminated-union narrowing по `response.success`. На `success: false` бросает `SummarizeError` с `message` от бэкенда и `status`. На `success: true` маппит `mainThought → mainIdea` и возвращает `Summary`.
-   - `export class SummarizeError extends Error` — плюс поле `status: number` для будущей аналитики.
+**Модифицированные:**
 
-3. `lib/summary.ts`
-   - Экспорт `Summary`, `SummarizeApiResponse`, `SummarizeApiSuccess`, `SummarizeApiError`.
-   - Type-guards: `isSupadataTranscript(x: unknown): x is SupadataTranscript`, `isOEmbedResponse(x: unknown): x is OEmbedResponse`, `isGeminiSummary(x: unknown): x is GeminiSummary` — помогают безопасно обращаться к полям внешних API.
-
-**Изменяемые функции:**
-
-- `components/summarizer.tsx::handleSubmit` — теперь асинхронно вызывает `summarizeUrl(url)`; в `try/catch` ставит `setError(err.message)` для пользовательской ошибки и не переходит в состояние `result` при провале. В `catch` оставляем `setStatus('idle')`, чтобы форма была готова к повторной отправке. На проде (не в dev) удалить мок-фоллбек.
-
-- `lib/mock-summary.ts` — переписать как pure data file: убрать локальное объявление типа `Summary`, импортировать из `lib/summary.ts`, реэкспортировать его для обратной совместимости. Поведение `getMockSummary()` не меняется.
+- `app/api/summarize/route.ts` — в самом начале `POST`:
+  1. `const supabase = await createServerSupabase();`
+  2. `const { data: { user } } = await supabase.auth.getUser(); if (!user) return NextResponse.json({ success: false, error: 'Войдите, чтобы создавать саммари', code: 'AUTH_REQUIRED' }, { status: 401 });`
+  3. `const { data: consumed } = await supabase.rpc('consume_credit'); if (!consumed) return NextResponse.json({ success: false, error: 'Закончились кредиты', code: 'NO_CREDITS' }, { status: 402 });`
+  4. В `try/catch` основной работы: на любой ошибке после успешного consume — `await supabase.rpc('refund_credit');` (через `.catch(() => {})`, чтобы не маскировать оригинальную ошибку), затем return.
+- `lib/summarize-client.ts` — `SummarizeError` получает поле `code?: string`; парсер пробрасывает `code` из ответа.
+- `components/summarizer.tsx`:
+  - Добавить в шапку `<AuthButton onAuthChange={refreshMe} />`.
+  - Импортировать `useEffect` и `getMe` из `lib/auth/client`.
+  - Локальный стейт: `authState: { status: 'loading' | 'guest' | 'authed', credits: number }`.
+  - `useEffect` на маунт: `getMe()` → стейт.
+  - В `handleSubmit` перед запросом: если `!authed` или `credits === 0` → `setErrorMessage(...)` и return.
+  - В `catch` от `summarizeUrl`: если `err.code === 'AUTH_REQUIRED'` → «Войдите, чтобы создавать саммари»; `NO_CREDITS` → «Закончились кредиты»; иначе — общий текст.
+  - После успешного `summarizeUrl` → `getMe()` (для актуализации баланса).
 
 **Удаляемые функции:** нет.
 
 [Classes]
-Новые классы:
 
-- `SummarizeError` (в `lib/summarize-client.ts`) — `class SummarizeError extends Error { status: number; constructor(message: string, status: number) }`. Используется во фронте для показа пользователю текста ошибки, пришедшей с бэкенда, и для будущей обработки специфичных кодов (например, 429 — предложить подождать).
+**Новые:**
 
-Классов-обёрток для Supadata/Gemini не делаем: они stateless-клиенты SDK, единственный экземпляр `GoogleGenAI` создаётся на модульном уровне в `route.ts` (холодный старт Next.js это нормально переживает).
+- `SummarizeError` (расширение в `lib/summarize-client.ts`) — добавить `code?: string` (опционально), хранить `code` в конструкторе.
+
+Классов-обёрток для Supabase SDK не делаем: `@supabase/supabase-js` уже и так объектно-ориентированный, а `createServerSupabase` / `createBrowserSupabase` — функции-фабрики.
 
 [Dependencies]
 
-**Добавить:**
+**Добавить (runtime):**
 
-- `@google/genai` — официальный SDK для Gemini 3. По PRD устанавливается через `npm install @google/genai`. Версия — последняя стабильная (на момент реализации уточнить `npm view @google/genai version`).
+- `@supabase/supabase-js` — клиент Supabase, isomorphic API. Версия — последняя стабильная (`pnpm view @supabase/supabase-js version` на момент реализации; в плане пинов не делаем, фиксируем в lockfile).
+- `@supabase/ssr` — обёртка для App Router, корректная работа с cookies и refresh токенов. Версия — последняя стабильная.
 
-**Не нужно:** отдельных пакетов для работы с Supadata — это REST, идём через `fetch`. Для YouTube oEmbed тоже `fetch`.
+**Установка:** `pnpm add @supabase/supabase-js @supabase/ssr` (используем pnpm, так как `pnpm-lock.yaml` в репо).
 
-**Никаких версион-пинов** в `package.json` руками — ставим через пакетный менеджер, фиксируем в lockfile.
-
-**Dev/peer:** `pnpm-lock.yaml` и `package-lock.json` уже присутствуют в репо; используем тот пакетный менеджер, который активен в проекте (`pnpm` рекомендован — есть `pnpm-lock.yaml`).
+**Никаких других пакетов:** zod опционально — если хочется валидацию на сервере, добавим `zod` (это +1 зависимость). Решение по умолчанию: используем **zod**, потому что ошибки валидации нужно возвращать пользователю осмысленно. Если zod не установлен — перейдём на ручную валидацию regex-ом.
 
 [Testing]
 
-**Ручная проверка (минимум, что нужно прогнать):**
+**Подготовка (делается один раз):**
 
-1. Локальный дев-сервер: `pnpm dev` (или `npm run dev`).
-2. **Happy-path (основной):** `curl -X POST http://localhost:3000/api/summarize -H "Content-Type: application/json" -d '{"url":"https://www.youtube.com/watch?v=kJQP7kiw5Fk"}'` — ожидаем 200 и JSON c `success: true`, в `data.title` — `Luis Fonsi - Despacito ft. Daddy Yankee`, `data.channel` — `LuisFonsiVEVO`, `data.mainThought` — осмысленное саммари на русском, `data.keyPoints` — массив из 3–5 пунктов.
-3. **Happy-path (альтернативный):** то же для `0hg1Abq9OKo` — ожидаем 200, `data.title` может быть дефолтным (oEmbed опционален).
-4. **Видео без субтитров:** `c9DIoSNoQNs` → 400 + `error: "Для этого видео недоступны текстовые субтитры"`.
-5. **Невалидный URL:** `not-a-url` → 400 + `error: "Неверный формат ссылки YouTube"`.
-6. **Пустой body:** `{}` → 400 + `error: "URL не предоставлен"`.
-7. **Холодный старт Supadata (DNS):** первый запрос после простоя может 1–2 раза вернуть 502 + `error: "Не удалось связаться с сервисом субтитров. Проверьте интернет-соединение и попробуйте ещё раз."` — это **ожидаемое поведение**: встроенные ретраи (2 попытки) уже отработали, клиенту достаточно просто кликнуть «Создать» ещё раз.
-8. **Очистка `GEMINI_API_KEY` в `.env.local` и перезапуск** — 500 + лог в `console.error`, на UI — «Не удалось сгенерировать краткое содержание…».
-9. **UI-проверка:** вставить эталонную ссылку → увидеть `LoadingState` (с тем же скелетоном) → увидеть `ResultCard` с реальными данными → кнопка «Сделать ещё одно» возвращает к форме.
+1. `pnpm add @supabase/supabase-js @supabase/ssr` (если берём zod — добавить `zod`).
+2. Создать `.env.local` по образцу `.env.example` и вписать `NEXT_PUBLIC_SUPABASE_URL=https://tnewmooaoytxvupzya.supabase.co` (реальный URL) и `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_A3lxeb91IjabfkM2GBd-UA_FA8E8V-L`. **Не коммитить.**
+3. Применить миграцию через MCP Supabase (`apply_migration`).
+4. **Важно:** в Supabase Dashboard → Authentication → Providers → Email должно быть выключено «Confirm email», иначе `signUp` не вернёт сессию. Функционал подтверждения почты будет добавлен позднее.
 
-**Unit-тесты:** проект не использует Jest/Vitest (в `package.json` их нет, в файловой структуре — тоже). Не добавляем новый test-runner в рамках этой задачи — это вне scope PRD. Если потребуется — отдельной задачей.
+**Smoke-test через DevTools (MCP `chrome-devtools`):**
 
-**Типизация:** прогон `pnpm tsc --noEmit` (или `npx tsc --noEmit`) — бэкенд не должен ломать строгий режим (`strict: true` в `tsconfig.json`). `next.config.mjs` сейчас имеет `ignoreBuildErrors: true`, но это не повод расслабляться.
+1. Запустить `pnpm dev`. Открыть `http://localhost:3000`.
+2. **Гость:** убедиться, что на главной видна кнопка «Войти / Создать аккаунт». Снимок экрана (для истории).
+3. **Регистрация:** кликнуть кнопку → открывается диалог → вкладка «Регистрация» → ввести уникальный email (например, `test+1@example.com`) + пароль ≥ 8 → submit. Ожидаемо: диалог закрывается, в шапке появляется карточка с email и «💎 5 кредитов». Снимок.
+4. **БД-проверка:** `execute_sql` → `select * from public.profiles;` → видим одну запись с `credits = 5`. `select id, email from auth.users;` → видим пользователя.
+5. **Саммари (эталонное, добавил пользователь):** вставить `https://www.youtube.com/watch?v=xITLHyM1TUM` → «Создать». Ожидаемо: 200, `ResultCard` с реальными данными, после — в шапке «💎 4 кредита». Снимок.
+   **Альтернативное счастливое видео:** `https://www.youtube.com/watch?v=kJQP7kiw5Fk` (для повторных прогонов в случае отказа первого).
+6. **БД после саммари:** `select credits from public.profiles;` → `4`.
+7. **Списание до нуля:** повторить саммари ещё 4 раза (или вызвать `/api/summarize` через curl 4 раза). Ожидаемо: после 5-го раза — `402 { code: 'NO_CREDITS' }`, на UI — «Закончились кредиты».
+8. **Сессия:** refresh страницы → карточка пользователя сохраняется (cookies работают). Открыть DevTools → Application → Cookies → видны `sb-…-auth-token`.
+9. **Выход:** нажать «Выйти» → карточка пропадает, появляется кнопка «Войти / Создать аккаунт». Сессионные cookies очищены.
+10. **Саммари после выхода:** попытка саммари → блокируется на UI (гость), или если curl напрямую — `401 AUTH_REQUIRED`.
+11. **Вход:** повторно войти тем же email/паролем → карточка восстанавливается, `credits` тот же (4).
+12. **Повторный email:** попытаться зарегистрироваться с тем же email → ошибка «Пользователь с таким email уже зарегистрирован».
+13. **Плохой пароль:** попытаться зарегистрироваться с паролем 5 символов → 400 «Пароль должен быть не короче 8 символов».
+14. **Refunds:** искусственно довести кредиты до 1 (вручную в БД), вызвать саммари на несуществующем видео → ждём ошибку от Supadata (например, `c9DIoSNoQNs` → 400). Проверить `credits` — должен быть всё ещё 1 (refund отработал).
 
-[Resilience]
+**Гонки (опционально, если будет время):** параллельно вызвать `/api/summarize` 10 раз из консоли (на 5 кредитах). Ожидаемо: 5 успешных + 5 `NO_CREDITS`. Проверить: `credits = 0`, не отрицательное.
 
-Бэкенд `/api/summarize` устойчив к типовым транзиентным проблемам:
+**Edge-cases:**
 
-- **`fetchWithRetry(url, init, { timeoutMs, retries, delayMs })`** — обёртка над глобальным `fetch` с тремя гарантиями: (1) **таймаут** через `AbortController` (по умолчанию 15 сек), (2) **ретраи** с экспоненциальной задержкой (по умолчанию 2 повтора: 500мс → 1000мс), (3) **умная стратегия**: ретраим только сетевые ошибки и HTTP 5xx/429, остальные ответы (200/4xx кроме 429) возвращаем сразу.
-  - Применяется к `fetchOEmbed` (`timeoutMs: 5_000, retries: 1`) и `fetchTranscript` (`timeoutMs: 15_000, retries: 2`).
-- **`withTimeout(promise, ms, label)`** — обёртка для Gemini SDK, который не принимает `httpOptions.timeout` на `generateContent`. Таймаут по умолчанию 30 сек.
-- **`mapError(err)`** — единая точка маппинга внутренних ошибок в человекочитаемые сообщения и HTTP-коды. Особенно важно для **undici-ошибок** (встроенный `fetch` в Node.js): безликий `TypeError: fetch failed` (возникает при DNS-проблемах, ECONNRESET, TLS-ошибках) превращается в `502` + «Не удалось связаться с сервисом субтитров. Проверьте интернет-соединение и попробуйте ещё раз.». Таймауты → `504` + «Сервис не ответил вовремя…». Ошибки Gemini SDK → `502` + «Не удалось сгенерировать краткое содержание…».
-- **Без таймаута/ретраев** в проде это выглядит как зависший на минуту запрос или каскад 500-ок при первом обращении к Supadata из РФ-сетей (DNS через `100.64.0.1` нередко таймаутится на холодную).
+- Закрыть/открыть диалог — стейт должен сбрасываться.
+- `Enter` в поле password в диалоге — должно сабмитить.
+- `Escape` — закрывает диалог.
+
+**Network/console:** в DevTools Console не должно быть красных ошибок. `chrome-devtools list_console_messages` после полного сценария — никаких `error`-уровня.
+
+**Production-build:** `pnpm build` должен пройти без ошибок (Next.js + TS).
 
 [Implementation Order]
 
-1. **Установить зависимость** `@google/genai` (`pnpm add @google/genai` или `npm i @google/genai`) — без этого route не скомпилируется.
-2. **Создать `lib/summary.ts`** — типы и type-guards. Это база, от которой зависят остальные файлы.
-3. **Перевести `lib/mock-summary.ts`** на импорт типа из `lib/summary.ts` (реэкспорт для совместимости с `result-card.tsx` и `summarizer.tsx`).
-4. **Создать `lib/summarize-client.ts`** с `summarizeUrl` и `SummarizeError`. На этом этапе бэкенд ещё не нужен — клиент сначала пишем с мок-фоллбеком, чтобы фронт не падал.
-5. **Создать `app/api/summarize/route.ts`** — основная серверная логика (POST handler со всеми шагами: валидация → oEmbed → Supadata → Gemini → маппинг в `Summary`).
-6. **Добавить `.env.example`** с шаблоном `SUPADATA_API_KEY` и `GEMINI_API_KEY` (без реальных значений).
-7. **Обновить `components/summarizer.tsx`** — заменить мок на вызов `summarizeUrl(url)`, обработать ошибки, оставить дев-фоллбек на мок при отсутствии ключей.
-8. **Прогнать `tsc --noEmit` и `pnpm dev`** — локальная проверка, что фронт + бэкенд дружат.
-9. **Прогнать `curl`-сценарии** из раздела Testing: happy-path на `kJQP7kiw5Fk` (или `0hg1Abq9OKo`), edge-cases — `c9DIoSNoQNs` (без субтитров), `not-a-url`, пустой body.
-10. **Закоммитить**, прописать env-переменные в Vercel (Settings → Environment Variables), задеплоить.
-
-**Дополнительно (опционально, после первого успешного деплоя):**
-
-- Установить `export const maxDuration = 60` в `route.ts`, если начнут приходить таймауты на длинных видео (Vercel Hobby: до 60 сек в платных планах, в Hobby — уточнять в доке).
-- Добавить простое in-memory rate-limiting на IP (через `Map` с TTL) — защита от перерасхода квот Supadata/Gemini на бесплатном тарифе.
+1. **Установить зависимости:** `pnpm add @supabase/supabase-js @supabase/ssr zod` (если берём zod).
+2. **Создать файлы Supabase:** `lib/supabase/server.ts`, `client.ts`, `middleware.ts`, `types.ts`. Сверить с докой `@supabase/ssr` (Context7).
+3. **Создать `middleware.ts` в корне**, проверить, что matcher исключает статику, сессия обновляется.
+4. **Создать миграцию `supabase/migrations/20260609000000_init_auth_and_credits.sql`** и применить через MCP `apply_migration` (с проектом `tnewmooaoytxvupzzyga`). Проверить результат: `list_tables` → видим `public.profiles`; `execute_sql` → триггер есть.
+5. **Дополнить `.env.example`** и создать `.env.local` (вне git).
+6. **Создать `lib/auth/types.ts`, `lib/auth/validation.ts`, `lib/auth/client.ts`**.
+7. **Создать API-роуты** `app/api/auth/{signup,signin,signout,me}/route.ts`. В каждом — типизированный `try/catch`, понятные ошибки.
+8. **Прогнать smoke-test API через curl:**
+   - `POST /api/summarize` с `{"url":"https://www.youtube.com/watch?v=xITLHyM1TUM"}` (используя cookies от signin) → 200, `success: true`. Это первичная проверка happy-path (а не эталонного `kJQP7kiw5Fk`, т.к. пользователь явно попросил тестировать на `xITLHyM1TUM`).
+   - `POST /api/auth/signup` с новым email → 200, в ответе `profile.credits = 5`.
+   - `GET /api/auth/me` (с cookies от прошлого шага) → 200 `authenticated: true`.
+   - `POST /api/auth/signout` → 200.
+   - `GET /api/auth/me` → `authenticated: false`.
+   - `POST /api/auth/signin` с теми же кред → 200, `credits` сохранён.
+9. **Создать `components/auth-dialog.tsx`, `components/auth-button.tsx`**. Проверить в DevTools, что модалка открывается/закрывается, переключаются вкладки.
+10. **Модифицировать `app/api/summarize/route.ts`:** добавить `createServerSupabase`, `getUser`, `consume_credit`, `refund_credit` в catch.
+11. **Модифицировать `lib/summarize-client.ts`:** добавить `code` в `SummarizeError`.
+12. **Модифицировать `components/summarizer.tsx`:** добавить `<AuthButton />`, блокировку submit, обработку кодов ошибок.
+13. **Полный E2E-тест через `chrome-devtools`** по чек-листу Testing. Снимки экрана на ключевых шагах.
+14. **Прогнать `pnpm tsc --noEmit`** — TypeScript не должен ругаться.
+15. **Прогнать `pnpm build`** — продакшен-билд должен пройти.
+16. **Закоммитить** (без `.env.local`, без ключей в коде). Готово к деплою (env-переменные проставить в Vercel перед деплоем).

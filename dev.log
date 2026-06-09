@@ -1,0 +1,61 @@
+$ next dev
+▲ Next.js 16.2.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://10.33.51.51:3000
+- Environments: .env.local
+✓ Ready in 1152ms
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\avk_test\package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * C:\avk_test\ai\03\pnpm-workspace.yaml
+
+Creating turbopack project { dir: 'C:\\avk_test\\ai\\03', testMode: true }
+⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+
+ GET / 200 in 998ms (next.js: 350ms, proxy.ts: 232ms, application-code: 416ms)
+ GET /api/auth/me 200 in 630ms (next.js: 501ms, proxy.ts: 33ms, application-code: 96ms)
+ GET /api/auth/me 200 in 77ms (next.js: 34ms, proxy.ts: 22ms, application-code: 22ms)
+ GET /api/auth/me 200 in 24ms (next.js: 5ms, proxy.ts: 5ms, application-code: 13ms)
+ POST /api/auth/signup 400 in 73ms (next.js: 52ms, proxy.ts: 9ms, application-code: 12ms)
+ POST /api/auth/signup 400 in 23ms (next.js: 7ms, proxy.ts: 9ms, application-code: 8ms)
+ POST /api/auth/signup 400 in 16ms (next.js: 4ms, proxy.ts: 8ms, application-code: 4ms)
+ POST /api/auth/signup 400 in 22ms (next.js: 6ms, proxy.ts: 9ms, application-code: 7ms)
+ POST /api/auth/signup 400 in 22ms (next.js: 9ms, proxy.ts: 7ms, application-code: 6ms)
+ GET /api/auth/me 200 in 204ms (next.js: 166ms, proxy.ts: 10ms, application-code: 28ms)
+ POST /api/auth/signup 400 in 565ms (next.js: 5ms, proxy.ts: 8ms, application-code: 551ms)
+ GET /api/auth/me 200 in 40ms (next.js: 14ms, proxy.ts: 9ms, application-code: 17ms)
+ POST /api/auth/signup 400 in 296ms (next.js: 5ms, proxy.ts: 5ms, application-code: 286ms)
+ POST /api/auth/signup 400 in 282ms (next.js: 4ms, proxy.ts: 6ms, application-code: 272ms)
+ GET / 200 in 76ms (next.js: 9ms, proxy.ts: 7ms, application-code: 61ms)
+ GET /api/auth/me 200 in 47ms (next.js: 13ms, proxy.ts: 12ms, application-code: 22ms)
+ GET /api/auth/me 200 in 86ms (next.js: 28ms, proxy.ts: 35ms, application-code: 23ms)
+ POST /api/auth/signup 400 in 473ms (next.js: 11ms, proxy.ts: 13ms, application-code: 449ms)
+ POST /api/summarize 401 in 653ms (next.js: 593ms, proxy.ts: 12ms, application-code: 48ms)
+ POST /api/summarize 401 in 80ms (next.js: 35ms, proxy.ts: 18ms, application-code: 27ms)
+ GET /api/summarize 405 in 26ms (next.js: 9ms, proxy.ts: 7ms, application-code: 10ms)
+ GET /api/auth/me 200 in 93ms (next.js: 40ms, proxy.ts: 20ms, application-code: 33ms)
+ POST /api/auth/signout 200 in 590ms (next.js: 552ms, proxy.ts: 17ms, application-code: 21ms)
+ GET / 200 in 191ms (next.js: 15ms, proxy.ts: 18ms, application-code: 158ms)
+ GET /api/auth/me 200 in 71ms (next.js: 16ms, proxy.ts: 24ms, application-code: 31ms)
+ GET /api/auth/me 200 in 73ms (next.js: 23ms, proxy.ts: 25ms, application-code: 24ms)
+ POST /api/auth/signup 400 in 556ms (next.js: 11ms, proxy.ts: 16ms, application-code: 528ms)
+ POST /api/auth/signup 400 in 948ms (next.js: 55ms, proxy.ts: 255ms, application-code: 638ms)
+ GET / 200 in 1307ms (next.js: 556ms, proxy.ts: 472ms, application-code: 279ms)
+ GET / 200 in 468ms (next.js: 16ms, proxy.ts: 26ms, application-code: 426ms)
+ GET /api/auth/me 200 in 1645ms (next.js: 1577ms, proxy.ts: 20ms, application-code: 48ms)
+ GET /api/auth/me 200 in 1667ms (next.js: 1624ms, proxy.ts: 22ms, application-code: 22ms)
+ POST /api/auth/signup 400 in 756ms (next.js: 297ms, proxy.ts: 17ms, application-code: 442ms)
+ POST /api/auth/signup 400 in 23ms (next.js: 6ms, proxy.ts: 10ms, application-code: 7ms)
+ POST /api/auth/signup 400 in 244ms (next.js: 8ms, proxy.ts: 6ms, application-code: 230ms)
+ GET / 200 in 649ms (next.js: 209ms, proxy.ts: 206ms, application-code: 234ms)
+ GET / 200 in 192ms (next.js: 10ms, proxy.ts: 16ms, application-code: 166ms)
+ GET /api/auth/me 200 in 534ms (next.js: 425ms, proxy.ts: 22ms, application-code: 87ms)
+ GET /api/auth/me 200 in 559ms (next.js: 508ms, proxy.ts: 27ms, application-code: 24ms)
+ POST /api/auth/signup 200 in 1453ms (next.js: 241ms, proxy.ts: 21ms, application-code: 1191ms)
+ GET /api/auth/me 200 in 448ms (next.js: 8ms, proxy.ts: 188ms, application-code: 251ms)
+ POST /api/auth/signout 200 in 991ms (next.js: 106ms, proxy.ts: 748ms, application-code: 136ms)
+ GET /api/auth/me 200 in 40ms (next.js: 11ms, proxy.ts: 12ms, application-code: 18ms)
+ POST /api/auth/signin 200 in 832ms (next.js: 171ms, proxy.ts: 16ms, application-code: 645ms)
+ GET /api/auth/me 200 in 335ms (next.js: 13ms, proxy.ts: 121ms, application-code: 201ms)

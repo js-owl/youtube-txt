@@ -6,6 +6,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
 import { extractVideoId } from "@/lib/youtube";
+import { createServerSupabase } from "@/lib/supabase/server";
 import {
   isGeminiSummary,
   isOEmbedResponse,
@@ -235,10 +236,14 @@ async function generateSummary(transcript: string): Promise<{
   return parsed;
 }
 
-type ErrorBody = { success: false; error: string };
+type ErrorBody = { success: false; error: string; code?: string };
 
-function errorResponse(message: string, status: number) {
-  const body: ErrorBody = { success: false, error: message };
+function errorResponse(
+  message: string,
+  status: number,
+  code?: "AUTH_REQUIRED" | "NO_CREDITS",
+) {
+  const body: ErrorBody = { success: false, error: message, code };
   return NextResponse.json(body, { status });
 }
 
@@ -308,11 +313,40 @@ function mapError(err: unknown): { message: string; status: number } {
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
+  // 1. Авторизация
+  const supabase = await createServerSupabase();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return errorResponse(
+      "Войдите, чтобы создавать саммари",
+      401,
+      "AUTH_REQUIRED",
+    );
+  }
+
+  // 2. Списание кредита (атомарно). Если 0 кредитов — отказываем.
+  const { data: consumed } = await supabase.rpc("consume_credit");
+  if (!consumed) {
+    return errorResponse("Закончились кредиты", 402, "NO_CREDITS");
+  }
+
+  // Возвращаем кредит при любой ошибке (best-effort, не маскируем основную).
+  const refund = async () => {
+    try {
+      await supabase.rpc("refund_credit");
+    } catch (e) {
+      console.error("[refund_credit] failed:", e);
+    }
+  };
+
   try {
     let body: unknown;
     try {
       body = await req.json();
     } catch {
+      await refund();
       return errorResponse("Некорректный JSON в теле запроса.", 400);
     }
 
@@ -322,11 +356,13 @@ export async function POST(req: Request): Promise<NextResponse> {
         : undefined;
 
     if (typeof url !== "string" || url.trim().length === 0) {
+      await refund();
       return errorResponse("URL не предоставлен", 400);
     }
 
     const videoId = extractVideoId(url);
     if (!videoId) {
+      await refund();
       return errorResponse("Неверный формат ссылки YouTube", 400);
     }
 
@@ -351,6 +387,7 @@ export async function POST(req: Request): Promise<NextResponse> {
       { status: 200 },
     );
   } catch (err) {
+    await refund();
     const { message, status } = mapError(err);
     console.error("[/api/summarize] error:", err);
     return errorResponse(message, status);
