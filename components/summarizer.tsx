@@ -4,7 +4,6 @@ import { ArrowRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { LoadingState } from "@/components/loading-state";
 import { ResultCard } from "@/components/result-card";
-import { AuthButton } from "@/components/auth-button";
 import { getMockSummary } from "@/lib/mock-summary";
 import { summarizeUrl, SummarizeError } from "@/lib/summarize-client";
 import { getMe } from "@/lib/auth/client";
@@ -17,7 +16,11 @@ import {
 
 type Status = "idle" | "loading" | "result";
 
-export function Summarizer() {
+type SummarizerProps = {
+  authVersion?: number;
+};
+
+export function Summarizer({ authVersion = 0 }: SummarizerProps) {
   const [url, setUrl] = useState("");
   const [touched, setTouched] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
@@ -35,7 +38,7 @@ export function Summarizer() {
   }
   useEffect(() => {
     refreshMe();
-  }, []);
+  }, [authVersion]);
 
   const isValid = isValidYouTubeUrl(url);
   const showError = touched && url.length > 0 && !isValid;
@@ -123,10 +126,6 @@ export function Summarizer() {
 
   return (
     <div className="animate-fade-up flex w-full max-w-2xl flex-col items-center">
-      <div className="mb-6 flex w-full justify-end">
-        <AuthButton onAuthChange={refreshMe} />
-      </div>
-
       <h1 className="text-stroke text-center font-heading text-7xl font-black uppercase leading-none tracking-tight sm:text-8xl md:text-9xl">
         Смысл
       </h1>

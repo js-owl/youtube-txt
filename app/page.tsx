@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { Summarizer } from "@/components/summarizer";
+import { HomeShell } from "@/components/home-shell";
 
 export default function Page() {
   return (
@@ -22,7 +22,7 @@ export default function Page() {
       />
 
       <div className="relative z-10 flex w-full justify-center">
-        <Summarizer />
+        <HomeShell />
       </div>
     </main>
   );
