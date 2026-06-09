@@ -59,3 +59,25 @@ Creating turbopack project { dir: 'C:\\avk_test\\ai\\03', testMode: true }
  GET /api/auth/me 200 in 40ms (next.js: 11ms, proxy.ts: 12ms, application-code: 18ms)
  POST /api/auth/signin 200 in 832ms (next.js: 171ms, proxy.ts: 16ms, application-code: 645ms)
  GET /api/auth/me 200 in 335ms (next.js: 13ms, proxy.ts: 121ms, application-code: 201ms)
+ GET / 200 in 543ms (next.js: 9ms, proxy.ts: 468ms, application-code: 66ms)
+ GET /api/auth/me 200 in 633ms (next.js: 12ms, proxy.ts: 278ms, application-code: 343ms)
+ GET /api/auth/me 200 in 1067ms (next.js: 22ms, proxy.ts: 473ms, application-code: 572ms)
+[/api/summarize] error: Error: SUPADATA_API_KEY не задан в переменных окружения.
+    at fetchTranscript (app\api\summarize\route.ts:130:11)
+    at POST (app\api\summarize\route.ts:371:7)
+  128 |   const apiKey = process.env.SUPADATA_API_KEY;
+  129 |   if (!apiKey) {
+> 130 |     throw new Error("SUPADATA_API_KEY не задан в переменных окружения.");
+      |           ^
+  131 |   }
+  132 |
+  133 |   const url = `${SUPADATA_URL}?videoId=${encodeURIComponent(videoId)}`;
+ POST /api/summarize 500 in 1540ms (next.js: 351ms, proxy.ts: 275ms, application-code: 914ms)
+ GET /api/auth/me 200 in 338ms (next.js: 15ms, proxy.ts: 127ms, application-code: 197ms)
+ GET /api/auth/me 200 in 375ms (next.js: 13ms, proxy.ts: 152ms, application-code: 210ms)
+ GET /api/auth/me 200 in 471ms (next.js: 10ms, proxy.ts: 240ms, application-code: 222ms)
+ POST /api/auth/signout 200 in 756ms (next.js: 8ms, proxy.ts: 426ms, application-code: 322ms)
+ GET /api/auth/me 200 in 34ms (next.js: 9ms, proxy.ts: 9ms, application-code: 16ms)
+ GET / 200 in 136ms (next.js: 16ms, proxy.ts: 12ms, application-code: 107ms)
+ GET /api/auth/me 200 in 54ms (next.js: 11ms, proxy.ts: 24ms, application-code: 18ms)
+ GET /api/auth/me 200 in 41ms (next.js: 9ms, proxy.ts: 15ms, application-code: 17ms)
